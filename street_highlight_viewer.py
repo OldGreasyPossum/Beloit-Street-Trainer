@@ -218,6 +218,11 @@ class StreetViewer:
         self._anim_after_id = None
         self._anim_gen = 0
 
+        # Wrong-street blink state
+        self.wrong_blink_on = True
+        self.wrong_blink_after_id = None
+        self.wrong_blink_gen = 0
+
         self.draw_image()
         self.draw_landmarks()
         self.pick_new_target()
@@ -406,6 +411,7 @@ class StreetViewer:
         self.correct_highlight_name = None
         self.wrong_highlight_name = None
         self._cancel_blink()
+        self._cancel_wrong_blink()
         self._cancel_anim()
 
         if s:
@@ -449,21 +455,21 @@ class StreetViewer:
 
                 old_correct = self.current_target_name
 
-                self.last_result_message = (
-                    f"Wrong! You clicked {clicked_name}"
-                )
+                self.last_result_message = f"Wrong!\nYou clicked: {clicked_name}"
                 self.last_result_color = "red"
 
                 self.correct_highlight_name = old_correct
                 self.wrong_highlight_name = clicked_name
 
-                # Clear hint, advance target, zoom out to show correct street
                 self.hint_used_for_current = False
                 self.hint_street_names = []
                 self.pick_new_target()
+                self._start_wrong_blink()
                 self.zoom_out_to_street(old_correct)
+                self.draw_result_highlights()
+                self.draw_result_message()
                 self.update_status_text()
-                # No auto-clear — highlights stay until their next click
+                self.schedule_clear_feedback(6000)
         else:
             # Clicked on empty map: do nothing
             print("You clicked: no street")
@@ -476,10 +482,11 @@ class StreetViewer:
 
     def use_hint(self):
         """Highlight 4 candidate streets in solid purple, including the correct one."""
-        if not self.current_target_name:
+        if not self.current_target_name or self.hint_used_for_current:
             return
 
         self.hint_used_for_current = True
+        self.hint_button.config(state="disabled")
 
         other_names = [n for n in self.street_names if n != self.current_target_name]
         random.shuffle(other_names)
@@ -515,24 +522,24 @@ class StreetViewer:
 
     # ---------- auto-clear feedback ----------
 
-    def schedule_clear_feedback(self):
-        """Clear result highlights/messages after 4 seconds."""
+    def schedule_clear_feedback(self, delay_ms=4000):
+        """Clear result highlights/messages after delay_ms milliseconds."""
         if self.clear_after_id is not None:
             self.canvas.after_cancel(self.clear_after_id)
             self.clear_after_id = None
-
-        self.clear_after_id = self.canvas.after(4000, self.clear_feedback)
+        self.clear_after_id = self.canvas.after(delay_ms, self.clear_feedback)
 
     def clear_feedback(self):
-        """Actually clear result highlights, messages, and hint lines."""
+        """Clear result highlights, messages, and hint lines."""
+        self._cancel_wrong_blink()
         self.clear_after_id = None
         self.last_result_message = None
         self.correct_highlight_name = None
         self.wrong_highlight_name = None
-        self.hint_street_names = []          # <‑‑ clear any active hints
+        self.hint_street_names = []
         self.canvas.delete("result_highlight")
         self.canvas.delete("result_text")
-        self.canvas.delete("hint_highlight") # remove purple hint lines
+        self.canvas.delete("hint_highlight")
         self.update_status_text()
 
 
@@ -628,7 +635,7 @@ class StreetViewer:
             )
 
     def draw_result_highlights(self):
-        """Blue for correct (on correct answer), red for wrong street."""
+        """Blue for correct (on correct answer), red (blinking) for wrong street."""
         self.canvas.delete("result_highlight")
 
         if self.correct_highlight_name:
@@ -639,16 +646,11 @@ class StreetViewer:
                 sx1, sy1 = self.image_to_screen(x1, y1)
                 sx2, sy2 = self.image_to_screen(x2, y2)
                 self.canvas.create_line(
-                    sx1,
-                    sy1,
-                    sx2,
-                    sy2,
-                    fill="blue",
-                    width=8,
-                    tags="result_highlight",
+                    sx1, sy1, sx2, sy2,
+                    fill="blue", width=8, tags="result_highlight",
                 )
 
-        if self.wrong_highlight_name:
+        if self.wrong_highlight_name and self.wrong_blink_on:
             for s in self.streets:
                 if s["name"] != self.wrong_highlight_name:
                     continue
@@ -656,50 +658,54 @@ class StreetViewer:
                 sx1, sy1 = self.image_to_screen(x1, y1)
                 sx2, sy2 = self.image_to_screen(x2, y2)
                 self.canvas.create_line(
-                    sx1,
-                    sy1,
-                    sx2,
-                    sy2,
-                    fill="red",
-                    width=7,
-                    tags="result_highlight",
+                    sx1, sy1, sx2, sy2,
+                    fill="red", width=7, tags="result_highlight",
                 )
 
     def draw_result_message(self):
-        """Big text message for correct/wrong feedback."""
+        """Correct message at center-top; wrong message under Skip button (right side)."""
         self.canvas.delete("result_text")
 
         if not self.last_result_message:
             return
 
-        x = 600
-        y = 60
+        is_wrong = self.last_result_color == "red"
 
-        font_tuple = ("Arial", 24, "bold")
-        text = self.last_result_message
-        color = self.last_result_color
-
-        for dx in (-2, 2):
-            for dy in (-2, 2):
+        if is_wrong:
+            # Two lines, right-aligned under the Skip button
+            lines = self.last_result_message.split("\n", 1)
+            font_sizes = [18, 14]
+            x, anchor = 1170, "ne"
+            y = 148
+            for i, line in enumerate(lines):
+                fsize = font_sizes[min(i, len(font_sizes) - 1)]
+                ft = ("Arial", fsize, "bold")
+                for dx in (-1, 1):
+                    for dy in (-1, 1):
+                        self.canvas.create_text(
+                            x + dx, y + dy, text=line,
+                            fill="black", font=ft, anchor=anchor, tags="result_text",
+                        )
                 self.canvas.create_text(
-                    x + dx,
-                    y + dy,
-                    text=text,
-                    fill="black",
-                    font=font_tuple,
-                    anchor="n",
-                    tags="result_text",
+                    x, y, text=line,
+                    fill="red", font=ft, anchor=anchor, tags="result_text",
                 )
-
-        self.canvas.create_text(
-            x,
-            y,
-            text=text,
-            fill=color,
-            font=font_tuple,
-            anchor="n",
-            tags="result_text",
-        )
+                y += fsize + 4
+        else:
+            # Single line, centered at top
+            ft = ("Arial", 24, "bold")
+            for dx in (-2, 2):
+                for dy in (-2, 2):
+                    self.canvas.create_text(
+                        600 + dx, 60 + dy,
+                        text=self.last_result_message, fill="black",
+                        font=ft, anchor="n", tags="result_text",
+                    )
+            self.canvas.create_text(
+                600, 60,
+                text=self.last_result_message, fill=self.last_result_color,
+                font=ft, anchor="n", tags="result_text",
+            )
 
     # ---------- quiz helpers ----------
 
@@ -711,6 +717,7 @@ class StreetViewer:
             if not candidates:
                 candidates = self.street_names
             self.current_target_name = random.choice(candidates)
+        self.hint_button.config(state="normal")
         print(f"Find: {self.current_target_name}")
 
     def draw_outlined_text(
@@ -769,6 +776,25 @@ class StreetViewer:
             fill_color="white", stroke_color="black", stroke_width=2, font_size=13,
         )
 
+
+    def _start_wrong_blink(self):
+        self._cancel_wrong_blink()
+        gen = self.wrong_blink_gen
+        def blink():
+            if self.wrong_blink_gen != gen:
+                return
+            self.wrong_blink_on = not self.wrong_blink_on
+            self.draw_result_highlights()
+            self.wrong_blink_after_id = self.canvas.after(350, blink)
+        self.wrong_blink_on = True
+        self.wrong_blink_after_id = self.canvas.after(350, blink)
+
+    def _cancel_wrong_blink(self):
+        if self.wrong_blink_after_id is not None:
+            self.canvas.after_cancel(self.wrong_blink_after_id)
+            self.wrong_blink_after_id = None
+        self.wrong_blink_gen += 1
+        self.wrong_blink_on = True
 
     def _redraw_all(self):
         self.draw_image()
@@ -836,6 +862,7 @@ class StreetViewer:
     def skip_street(self):
         """Skip the current street without penalty."""
         self._cancel_blink()
+        self._cancel_wrong_blink()
         self._cancel_anim()
         self.hint_used_for_current = False
         self.hint_street_names = []

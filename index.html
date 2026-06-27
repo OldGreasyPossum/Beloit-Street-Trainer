@@ -46,6 +46,12 @@ canvas { display: block; }
   text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000;
   pointer-events: none;
 }
+#wrongMsg {
+  position: fixed; top: 120px; right: 10px;
+  font: bold 15px/1.4 Arial, sans-serif; color: red; text-align: right;
+  text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+  pointer-events: none; max-width: 190px;
+}
 
 @media (max-width: 600px) {
   #findName { font-size: 20px; }
@@ -66,6 +72,7 @@ canvas { display: block; }
   <button id="skipBtn">SKIP</button>
 </div>
 <div id="msg"></div>
+<div id="wrongMsg"></div>
 
 <script>
 'use strict';
@@ -87,13 +94,15 @@ const LANDMARK_NAMES = new Set([
 ]);
 
 // ── DOM ────────────────────────────────────────────────────────────────
-const canvas     = document.getElementById('map');
-const ctx        = canvas.getContext('2d');
-const findNameEl = document.getElementById('findName');
-const scoreRowEl = document.getElementById('scoreRow');
-const msgDiv     = document.getElementById('msg');
+const canvas      = document.getElementById('map');
+const ctx         = canvas.getContext('2d');
+const findNameEl  = document.getElementById('findName');
+const scoreRowEl  = document.getElementById('scoreRow');
+const msgDiv      = document.getElementById('msg');
+const wrongMsgDiv = document.getElementById('wrongMsg');
+const hintBtn     = document.getElementById('hintBtn');
 
-document.getElementById('hintBtn').addEventListener('click', useHint);
+hintBtn.addEventListener('click', useHint);
 document.getElementById('skipBtn').addEventListener('click', skipStreet);
 
 // ── State ──────────────────────────────────────────────────────────────
@@ -110,6 +119,7 @@ let correctHL = null, wrongHL = null;
 let msgText = '', msgColor = 'limegreen';
 
 let blinkTimer = null, blinkOn = true, blinkIsBlink = false;
+let wrongBlinkTimer = null, wrongBlinkOn = true;
 let clearTimer = null;
 
 // ── Startup ────────────────────────────────────────────────────────────
@@ -200,8 +210,8 @@ function render() {
   // Hint choices (purple)
   if (hintNames.length) drawGroup(hintNames, 'purple', 4);
 
-  // Wrong answer (red)
-  if (wrongHL) drawGroup(wrongHL, 'red', 7);
+  // Wrong answer (red, blinks)
+  if (wrongHL && wrongBlinkOn) drawGroup(wrongHL, 'red', 7);
 
   // Correct street — purple while blinking after a wrong answer, then blue
   if (correctHL && blinkOn) drawGroup(correctHL, blinkIsBlink ? 'purple' : 'blue', 9);
@@ -223,13 +233,17 @@ function updateStatus() {
 function pickTarget() {
   const pool = streetNames.filter(n => n !== target);
   target = pool.length ? pool[Math.floor(Math.random() * pool.length)] : streetNames[0];
+  hintBtn.disabled = false;
+  hintBtn.style.opacity = '1';
 }
 
 function handleTap(sx, sy) {
   if (!ready) return;
   cancelBlink();
+  cancelWrongBlink();
   cancelAnim();
   cancelClear();
+  wrongMsgDiv.textContent = '';
   const wasHintUsed = hintUsed;
   correctHL = null; wrongHL = null; hintNames = []; hintUsed = false; msgText = '';
 
@@ -249,22 +263,24 @@ function handleTap(sx, sy) {
     render();
   } else {
     const prev = target;
-    score    = 0;
-    msgText  = `Wrong!  You clicked: ${s.n}`;
-    msgColor = 'red';
-    wrongHL  = s.n;
+    score   = 0;
+    wrongHL = s.n;
     correctHL = prev;
     hintNames = [];
+    wrongMsgDiv.innerHTML = `Wrong!<br>You clicked: ${s.n}`;
     pickTarget();
-    zoomOutToStreet(prev);   // zoom out so they can see where the correct street is
-    // no auto-clear — highlights stay until their next answer
+    startWrongBlink();
+    zoomOutToStreet(prev);
+    scheduleClear(6000);
     render();
   }
 }
 
 function useHint() {
-  if (!target || !ready) return;
+  if (!target || !ready || hintUsed) return;
   hintUsed = true;
+  hintBtn.disabled = true;
+  hintBtn.style.opacity = '0.45';
   const others = streetNames.filter(n => n !== target);
   shuffle(others);
   hintNames = shuffle([target, ...others.slice(0, 3)]);
@@ -273,7 +289,8 @@ function useHint() {
 
 function skipStreet() {
   if (!ready) return;
-  cancelBlink(); cancelAnim(); cancelClear();
+  cancelBlink(); cancelWrongBlink(); cancelAnim(); cancelClear();
+  wrongMsgDiv.textContent = '';
   correctHL = null; wrongHL = null; hintNames = []; hintUsed = false; msgText = '';
   pickTarget();
   render();
@@ -295,10 +312,21 @@ function cancelBlink() {
   if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
   blinkOn = true;
 }
+function startWrongBlink() {
+  cancelWrongBlink();
+  wrongBlinkOn = true;
+  wrongBlinkTimer = setInterval(() => { wrongBlinkOn = !wrongBlinkOn; render(); }, 350);
+}
+function cancelWrongBlink() {
+  if (wrongBlinkTimer) { clearInterval(wrongBlinkTimer); wrongBlinkTimer = null; }
+  wrongBlinkOn = true;
+}
 function scheduleClear(ms) {
   cancelClear();
   clearTimer = setTimeout(() => {
+    cancelWrongBlink();
     correctHL = null; wrongHL = null; hintNames = []; msgText = '';
+    wrongMsgDiv.textContent = '';
     render();
   }, ms);
 }
