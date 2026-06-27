@@ -164,7 +164,6 @@ class StreetViewer:
 
         # Load streets
         self.streets = load_streets_from_csv(CSV_FILE, img_w, img_h)
-        print("Loaded streets:", len(self.streets))
         self.street_names = sorted({s["name"] for s in self.streets})
 
         # Start zoomed
@@ -416,7 +415,6 @@ class StreetViewer:
 
         if s:
             clicked_name = s["name"]
-            print(f"You clicked: {clicked_name}")
 
             if (
                 self.current_target_name is not None
@@ -472,7 +470,6 @@ class StreetViewer:
                 self.schedule_clear_feedback(6000)
         else:
             # Clicked on empty map: do nothing
-            print("You clicked: no street")
             self.draw_result_highlights()
             self.draw_hint_highlights()
             self.draw_result_message()
@@ -718,7 +715,6 @@ class StreetViewer:
                 candidates = self.street_names
             self.current_target_name = random.choice(candidates)
         self.hint_button.config(state="normal")
-        print(f"Find: {self.current_target_name}")
 
     def draw_outlined_text(
         self,
