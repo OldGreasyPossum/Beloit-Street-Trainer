@@ -210,11 +210,11 @@ function render() {
   // Hint choices (purple)
   if (hintNames.length) drawGroup(hintNames, 'purple', 4);
 
-  // Wrong answer (red, blinks)
-  if (wrongHL && wrongBlinkOn) drawGroup(wrongHL, 'red', 7);
+  // Wrong answer (red, steady)
+  if (wrongHL) drawGroup(wrongHL, 'red', 7);
 
-  // Correct street — purple while blinking after a wrong answer, then blue
-  if (correctHL && blinkOn) drawGroup(correctHL, blinkIsBlink ? 'purple' : 'blue', 9);
+  // Correct street (blue, blinks so the user can find it)
+  if (correctHL && wrongBlinkOn) drawGroup(correctHL, 'blue', 9);
 
   // Hover highlight (yellow) — desktop only, only when no active result
   if (hover && !correctHL && !wrongHL) drawGroup(hover, 'yellow', 6);

@@ -638,7 +638,7 @@ class StreetViewer:
         """Blue for correct (on correct answer), red (blinking) for wrong street."""
         self.canvas.delete("result_highlight")
 
-        if self.correct_highlight_name:
+        if self.correct_highlight_name and self.wrong_blink_on:
             for s in self.streets:
                 if s["name"] != self.correct_highlight_name:
                     continue
@@ -650,7 +650,7 @@ class StreetViewer:
                     fill="blue", width=8, tags="result_highlight",
                 )
 
-        if self.wrong_highlight_name and self.wrong_blink_on:
+        if self.wrong_highlight_name:
             for s in self.streets:
                 if s["name"] != self.wrong_highlight_name:
                     continue
