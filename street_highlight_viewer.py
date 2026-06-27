@@ -143,6 +143,21 @@ class StreetViewer:
             1180, 20, window=self.hint_button, anchor="ne", tags="hint_button"
         )
 
+        # Skip button
+        self.skip_button = Button(
+            self.canvas,
+            text="SKIP",
+            command=self.skip_street,
+            bg="gray",
+            fg="white",
+            font=("Arial", 14, "bold"),
+            width=8,
+            height=2,
+        )
+        self.canvas.create_window(
+            1180, 90, window=self.skip_button, anchor="ne", tags="skip_button"
+        )
+
         # Load map image
         self.image = Image.open(IMAGE_FILE)
         img_w, img_h = self.image.size
@@ -178,6 +193,7 @@ class StreetViewer:
         self.current_target_name = None
         self.score = 0.0
         self.best_score = 0.0
+        self.correct_count = 0
         self.status_text_id = None
 
         # Feedback
@@ -209,8 +225,15 @@ class StreetViewer:
         self.canvas.bind("<ButtonPress-2>", self.on_button_press)
         self.canvas.bind("<ButtonRelease-2>", self.on_button_release)
         self.canvas.bind("<B2-Motion>", self.on_mouse_drag)
+        self.canvas.bind("<ButtonPress-3>", self.on_button_press)
+        self.canvas.bind("<ButtonRelease-3>", self.on_button_release)
+        self.canvas.bind("<B3-Motion>", self.on_mouse_drag)
         self.canvas.bind("<Motion>", self.on_mouse_move)
         self.canvas.bind("<Button-1>", self.on_left_click)
+        self.root.bind("<Left>", self.on_arrow_key)
+        self.root.bind("<Right>", self.on_arrow_key)
+        self.root.bind("<Up>", self.on_arrow_key)
+        self.root.bind("<Down>", self.on_arrow_key)
 
     # ---------- core image rendering ----------
 
@@ -392,6 +415,7 @@ class StreetViewer:
                 else:
                     self.score += 1.0
 
+                self.correct_count += 1
                 if self.score > self.best_score:
                     self.best_score = self.score
 
@@ -681,7 +705,10 @@ class StreetViewer:
         if not self.street_names:
             self.current_target_name = None
         else:
-            self.current_target_name = random.choice(self.street_names)
+            candidates = [n for n in self.street_names if n != self.current_target_name]
+            if not candidates:
+                candidates = self.street_names
+            self.current_target_name = random.choice(candidates)
         print(f"Find: {self.current_target_name}")
 
     def draw_outlined_text(
@@ -726,12 +753,14 @@ class StreetViewer:
         if self.current_target_name is None:
             text = (
                 f"Find: (no streets) | "
-                f"Score: {self.score:.2f} | Best: {self.best_score:.2f}"
+                f"Score: {self.score:.2f} | Best: {self.best_score:.2f} | "
+                f"Correct: {self.correct_count}"
             )
         else:
             text = (
                 f"Find: {self.current_target_name} | "
-                f"Score: {self.score:.2f} | Best: {self.best_score:.2f}"
+                f"Score: {self.score:.2f} | Best: {self.best_score:.2f} | "
+                f"Correct: {self.correct_count}"
             )
 
         self.status_text_id = self.draw_outlined_text(
@@ -743,6 +772,42 @@ class StreetViewer:
             stroke_width=2,
             font_size=16,
         )
+
+
+    def skip_street(self):
+        """Skip the current street without penalty."""
+        self.hint_used_for_current = False
+        self.hint_street_names = []
+        self.last_result_message = None
+        self.correct_highlight_name = None
+        self.wrong_highlight_name = None
+        self._cancel_blink()
+        self.canvas.delete("result_highlight")
+        self.canvas.delete("result_text")
+        self.canvas.delete("hint_highlight")
+        self.pick_new_target()
+        self.update_status_text()
+
+    def on_arrow_key(self, event):
+        """Pan the map with arrow keys."""
+        step = 40
+        if event.keysym == "Left":
+            self.offset_x += step
+        elif event.keysym == "Right":
+            self.offset_x -= step
+        elif event.keysym == "Up":
+            self.offset_y += step
+        elif event.keysym == "Down":
+            self.offset_y -= step
+
+        if self.image_id is not None:
+            self.canvas.coords(self.image_id, self.offset_x, self.offset_y)
+        self.draw_landmarks()
+        self.draw_highlight()
+        self.draw_hint_highlights()
+        self.draw_result_highlights()
+        self.draw_result_message()
+        self.update_status_text()
 
 
 def main():

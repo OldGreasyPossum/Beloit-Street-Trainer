@@ -1,0 +1,6 @@
+@echo off
+echo Installing required packages...
+pip install pillow shapely >nul 2>&1
+echo Starting Beloit Street Trainer...
+python street_highlight_viewer.py
+pause
