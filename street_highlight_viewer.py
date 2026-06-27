@@ -214,6 +214,10 @@ class StreetViewer:
         # Auto-clear feedback timer
         self.clear_after_id = None
 
+        # Zoom animation state
+        self._anim_after_id = None
+        self._anim_gen = 0
+
         self.draw_image()
         self.draw_landmarks()
         self.pick_new_target()
@@ -241,7 +245,7 @@ class StreetViewer:
         w, h = self.image.size
         scaled = self.image.resize(
             (int(w * self.scale), int(h * self.scale)),
-            Image.Resampling.BILINEAR,
+            Image.Resampling.LANCZOS,
         )
         self.tk_image = ImageTk.PhotoImage(scaled)
         if self.image_id is None:
@@ -283,6 +287,7 @@ class StreetViewer:
     # ---------- zoom & pan ----------
 
     def on_mouse_wheel(self, event):
+        self._cancel_anim()
         old_scale = self.scale
 
         if self.scale < 3.0:
@@ -331,6 +336,7 @@ class StreetViewer:
         if not self.dragging:
             return
 
+        self._cancel_anim()
         dx = event.x - self.last_x
         dy = event.y - self.last_y
         self.offset_x += dx
@@ -400,6 +406,7 @@ class StreetViewer:
         self.correct_highlight_name = None
         self.wrong_highlight_name = None
         self._cancel_blink()
+        self._cancel_anim()
 
         if s:
             clicked_name = s["name"]
@@ -450,18 +457,13 @@ class StreetViewer:
                 self.correct_highlight_name = old_correct
                 self.wrong_highlight_name = clicked_name
 
-                # Start blinking the old correct street (twice length)
-                self.blink_state_on = True
-                self.blink_remaining = 12
-                self._blink_correct_street()
-
-                # Clear hint for next question and advance target
+                # Clear hint, advance target, zoom out to show correct street
                 self.hint_used_for_current = False
                 self.hint_street_names = []
-
                 self.pick_new_target()
+                self.zoom_out_to_street(old_correct)
                 self.update_status_text()
-                self.schedule_clear_feedback()
+                # No auto-clear — highlights stay until their next click
         else:
             # Clicked on empty map: do nothing
             print("You clicked: no street")
@@ -750,38 +752,96 @@ class StreetViewer:
     def update_status_text(self):
         self.canvas.delete("status")
 
-        if self.current_target_name is None:
-            text = (
-                f"Find: (no streets) | "
-                f"Score: {self.score:.2f} | Best: {self.best_score:.2f} | "
-                f"Correct: {self.correct_count}"
-            )
-        else:
-            text = (
-                f"Find: {self.current_target_name} | "
-                f"Score: {self.score:.2f} | Best: {self.best_score:.2f} | "
-                f"Correct: {self.correct_count}"
-            )
-
+        self.draw_outlined_text(
+            10, 10, "FIND:",
+            fill_color="#aaaaaa", stroke_color="black", stroke_width=2, font_size=11,
+        )
+        name = self.current_target_name or "(no streets)"
         self.status_text_id = self.draw_outlined_text(
-            10,
-            10,
-            text,
-            fill_color="yellow",
-            stroke_color="black",
-            stroke_width=2,
-            font_size=16,
+            10, 24, name,
+            fill_color="yellow", stroke_color="black", stroke_width=2, font_size=22,
+        )
+        score_text = (
+            f"Score: {self.score:.2f}  |  Best: {self.best_score:.2f}  |  Correct: {self.correct_count}"
+        )
+        self.draw_outlined_text(
+            10, 52, score_text,
+            fill_color="white", stroke_color="black", stroke_width=2, font_size=13,
         )
 
 
+    def _redraw_all(self):
+        self.draw_image()
+        self.draw_landmarks()
+        self.draw_highlight()
+        self.draw_hint_highlights()
+        self.draw_result_highlights()
+        self.draw_result_message()
+        self.update_status_text()
+
+    def _cancel_anim(self):
+        if self._anim_after_id is not None:
+            self.canvas.after_cancel(self._anim_after_id)
+            self._anim_after_id = None
+        self._anim_gen += 1
+
+    def _animate_to(self, target_scale, target_ox, target_oy, duration_ms, on_done=None):
+        frames = max(1, duration_ms // 16)
+        start_scale = self.scale
+        start_ox, start_oy = self.offset_x, self.offset_y
+        step_ms = duration_ms // frames
+        gen = self._anim_gen
+
+        def step(i):
+            if self._anim_gen != gen:
+                return
+            t = i / frames
+            e = t * t * (3 - 2 * t)  # smoothstep
+            self.scale = start_scale + (target_scale - start_scale) * e
+            self.offset_x = start_ox + (target_ox - start_ox) * e
+            self.offset_y = start_oy + (target_oy - start_oy) * e
+            self._redraw_all()
+            if i < frames:
+                self._anim_after_id = self.canvas.after(step_ms, lambda: step(i + 1))
+            else:
+                self._anim_after_id = None
+                if on_done:
+                    on_done()
+
+        step(0)
+
+    def zoom_out_to_street(self, name):
+        """Zoom out so the correct street is visible and centered on screen."""
+        self._cancel_anim()
+        xs, ys = [], []
+        for s in self.streets:
+            if s["name"] != name:
+                continue
+            xs.extend([s["x1"], s["x2"]])
+            ys.extend([s["y1"], s["y2"]])
+        if not xs:
+            return
+
+        cx = (min(xs) + max(xs)) / 2
+        cy = (min(ys) + max(ys)) / 2
+        W = (self.canvas.winfo_width() or 1200) / 2
+        H = (self.canvas.winfo_height() or 900) / 2
+
+        target_scale = self.min_scale * 1.25
+        target_ox = W - cx * target_scale
+        target_oy = H - cy * target_scale
+
+        self._animate_to(target_scale, target_ox, target_oy, 900)
+
     def skip_street(self):
         """Skip the current street without penalty."""
+        self._cancel_blink()
+        self._cancel_anim()
         self.hint_used_for_current = False
         self.hint_street_names = []
         self.last_result_message = None
         self.correct_highlight_name = None
         self.wrong_highlight_name = None
-        self._cancel_blink()
         self.canvas.delete("result_highlight")
         self.canvas.delete("result_text")
         self.canvas.delete("hint_highlight")
@@ -790,6 +850,7 @@ class StreetViewer:
 
     def on_arrow_key(self, event):
         """Pan the map with arrow keys."""
+        self._cancel_anim()
         step = 40
         if event.keysym == "Left":
             self.offset_x += step

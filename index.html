@@ -11,10 +11,21 @@ canvas { display: block; }
 
 #status {
   position: fixed; top: 10px; left: 10px;
-  color: yellow; font: bold 15px/1.4 Arial, sans-serif;
-  text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000;
+  background: rgba(0,0,0,0.65);
+  border-radius: 8px; padding: 8px 14px;
   pointer-events: none;
   max-width: calc(100vw - 200px);
+}
+#findLabel {
+  color: #aaa; font: bold 11px Arial, sans-serif;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+#findName {
+  color: yellow; font: bold 26px/1.15 Arial, sans-serif;
+  margin: 1px 0 3px;
+}
+#scoreRow {
+  color: #ccc; font: 12px Arial, sans-serif;
 }
 
 #controls {
@@ -37,7 +48,7 @@ canvas { display: block; }
 }
 
 @media (max-width: 600px) {
-  #status { font-size: 13px; }
+  #findName { font-size: 20px; }
   #controls button { padding: 14px 14px; font-size: 14px; min-width: 70px; }
   #msg { font-size: 18px; top: 52px; }
 }
@@ -45,7 +56,11 @@ canvas { display: block; }
 </head>
 <body>
 <canvas id="map"></canvas>
-<div id="status">Loading map…</div>
+<div id="status">
+  <div id="findLabel">FIND</div>
+  <div id="findName">…</div>
+  <div id="scoreRow">Loading…</div>
+</div>
 <div id="controls">
   <button id="hintBtn">HINT</button>
   <button id="skipBtn">SKIP</button>
@@ -72,10 +87,11 @@ const LANDMARK_NAMES = new Set([
 ]);
 
 // ── DOM ────────────────────────────────────────────────────────────────
-const canvas    = document.getElementById('map');
-const ctx       = canvas.getContext('2d');
-const statusDiv = document.getElementById('status');
-const msgDiv    = document.getElementById('msg');
+const canvas     = document.getElementById('map');
+const ctx        = canvas.getContext('2d');
+const findNameEl = document.getElementById('findName');
+const scoreRowEl = document.getElementById('scoreRow');
+const msgDiv     = document.getElementById('msg');
 
 document.getElementById('hintBtn').addEventListener('click', useHint);
 document.getElementById('skipBtn').addEventListener('click', skipStreet);
@@ -127,7 +143,7 @@ Promise.all([imgReady, dataReady]).then(([, data]) => {
   pickTarget();
   render();
 }).catch(err => {
-  statusDiv.textContent = 'Error loading data: ' + err.message;
+  findNameEl.textContent = 'Error: ' + err.message;
 });
 
 // ── Coords ─────────────────────────────────────────────────────────────
@@ -174,6 +190,8 @@ function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   // Base map
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(mapImg, offX, offY, IMG_W * scale, IMG_H * scale);
 
   // Landmark roads (always lime green)
@@ -191,13 +209,14 @@ function render() {
   // Hover highlight (yellow) — desktop only, only when no active result
   if (hover && !correctHL && !wrongHL) drawGroup(hover, 'yellow', 6);
 
-  // Status bar
-  const findStr = target ?? '…';
-  statusDiv.textContent =
-    `Find: ${findStr}  |  Score: ${score.toFixed(2)}  |  Best: ${best.toFixed(2)}  |  Correct: ${correct}`;
-
+  updateStatus();
   msgDiv.style.color = msgColor;
   msgDiv.textContent = msgText;
+}
+
+function updateStatus() {
+  findNameEl.textContent = target ?? '…';
+  scoreRowEl.textContent = `Score: ${score.toFixed(2)}  ·  Best: ${best.toFixed(2)}  ·  Correct: ${correct}`;
 }
 
 // ── Quiz ───────────────────────────────────────────────────────────────
@@ -209,6 +228,7 @@ function pickTarget() {
 function handleTap(sx, sy) {
   if (!ready) return;
   cancelBlink();
+  cancelAnim();
   cancelClear();
   const wasHintUsed = hintUsed;
   correctHL = null; wrongHL = null; hintNames = []; hintUsed = false; msgText = '';
@@ -234,9 +254,10 @@ function handleTap(sx, sy) {
     msgColor = 'red';
     wrongHL  = s.n;
     correctHL = prev;
+    hintNames = [];
     pickTarget();
-    startBlink();
-    scheduleClear(4500);
+    zoomOutToStreet(prev);   // zoom out so they can see where the correct street is
+    // no auto-clear — highlights stay until their next answer
     render();
   }
 }
@@ -252,7 +273,7 @@ function useHint() {
 
 function skipStreet() {
   if (!ready) return;
-  cancelBlink(); cancelClear();
+  cancelBlink(); cancelAnim(); cancelClear();
   correctHL = null; wrongHL = null; hintNames = []; hintUsed = false; msgText = '';
   pickTarget();
   render();
@@ -285,6 +306,53 @@ function cancelClear() {
   if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
 }
 
+// ── Zoom animation ─────────────────────────────────────────────────────
+let animId = null;
+
+function cancelAnim() {
+  if (animId) { cancelAnimationFrame(animId); animId = null; }
+}
+
+function easeOut(t) { return 1 - (1 - t) * (1 - t); }
+
+function animateTo(toScale, toOffX, toOffY, ms) {
+  cancelAnim();
+  const fromScale = scale, fromOffX = offX, fromOffY = offY;
+  let t0 = null;
+  function step(ts) {
+    if (!t0) t0 = ts;
+    const t = Math.min(1, (ts - t0) / ms);
+    const e = easeOut(t);
+    scale = fromScale + (toScale - fromScale) * e;
+    offX  = fromOffX  + (toOffX  - fromOffX)  * e;
+    offY  = fromOffY  + (toOffY  - fromOffY)  * e;
+    render();
+    if (t < 1) { animId = requestAnimationFrame(step); }
+    else { animId = null; }
+  }
+  animId = requestAnimationFrame(step);
+}
+
+function getStreetCenter(name) {
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (const s of streets) {
+    if (s.n !== name) continue;
+    x1 = Math.min(x1, s.x1, s.x2); y1 = Math.min(y1, s.y1, s.y2);
+    x2 = Math.max(x2, s.x1, s.x2); y2 = Math.max(y2, s.y1, s.y2);
+  }
+  return x1 === Infinity ? null : { cx: (x1 + x2) / 2, cy: (y1 + y2) / 2 };
+}
+
+function zoomOutToStreet(name) {
+  const c = getStreetCenter(name);
+  if (!c) return;
+  // Zoom out to show the full map, centering the correct street on screen
+  const targetScale = minScale * 1.25;
+  const targetOffX  = canvas.width  / 2 - c.cx * targetScale;
+  const targetOffY  = canvas.height / 2 - c.cy * targetScale;
+  animateTo(targetScale, targetOffX, targetOffY, 900);
+}
+
 // ── Mouse ──────────────────────────────────────────────────────────────
 let mDown = false, mStartX = 0, mStartY = 0, mCurX = 0, mCurY = 0;
 
@@ -296,6 +364,7 @@ canvas.addEventListener('mousedown', e => {
 });
 window.addEventListener('mousemove', e => {
   if (mDown) {
+    cancelAnim();
     offX += e.clientX - mCurX;
     offY += e.clientY - mCurY;
     mCurX = e.clientX; mCurY = e.clientY;
@@ -313,6 +382,7 @@ window.addEventListener('mouseup', e => {
 });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
+  cancelAnim();
   const f  = e.deltaY < 0 ? 1.1 : 1 / 1.1;
   const ns = Math.max(minScale, Math.min(maxScale, scale * f));
   offX  = e.clientX - (e.clientX - offX) * (ns / scale);
@@ -349,6 +419,7 @@ canvas.addEventListener('touchmove', e => {
     const dy = e.touches[0].clientY - tCurY;
     if (Math.abs(e.touches[0].clientX - tStartX) > TAP_DIST ||
         Math.abs(e.touches[0].clientY - tStartY) > TAP_DIST) tMoved = true;
+    cancelAnim();
     offX += dx; offY += dy;
     tCurX = e.touches[0].clientX; tCurY = e.touches[0].clientY;
     render();
@@ -384,6 +455,7 @@ canvas.addEventListener('touchend', e => {
 
 // ── Arrow keys ──────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
+  cancelAnim();
   const step = 50;
   if      (e.key === 'ArrowLeft')  offX += step;
   else if (e.key === 'ArrowRight') offX -= step;
